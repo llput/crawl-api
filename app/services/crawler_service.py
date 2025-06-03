@@ -3,13 +3,20 @@ import logging
 from typing import Any
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai.content_filter_strategy import PruningContentFilter
-from app.models.models import CrawlRequest, CrawlResult, MarkdownRequest, MarkdownResponse, MarkdownFormat
-
+from app.models.models import CrawlRequest, CrawlData, MarkdownRequest, MarkdownData, MarkdownFormat
 
 logger = logging.getLogger(__name__)
+
+
+class CrawlerException(Exception):
+    """爬虫异常类"""
+
+    def __init__(self, message: str, error_type: str = "unknown"):
+        self.message = message
+        self.error_type = error_type
+        super().__init__(message)
 
 
 class CrawlerService:
@@ -75,17 +82,19 @@ class CrawlerService:
 
         return config
 
-    async def crawl_url(self, request: CrawlRequest) -> CrawlResult:
+    async def crawl_url(self, request: CrawlRequest) -> CrawlData:
         """
-        爬取单个URL
+        爬取单个URL - 返回纯业务数据或抛出异常
 
         Args:
             request: 爬取请求对象
 
         Returns:
-            CrawlResult: 爬取结果
-        """
+            CrawlData: 爬取的业务数据
 
+        Raises:
+            CrawlerException: 爬取失败时抛出
+        """
         try:
             browser_config = self._create_browser_config(request.js_enabled)
             crawler_config = self._create_crawler_config(request)
@@ -93,33 +102,49 @@ class CrawlerService:
             async with AsyncWebCrawler(config=browser_config) as crawler:
                 result = await crawler.arun(url=request.url, config=crawler_config)
 
-                return self._parse_crawl_result(request.url, result)
+                if not result.success:
+                    raise CrawlerException(
+                        message=getattr(result, 'error_message', '爬取失败'),
+                        error_type="crawl_failed"
+                    )
+
+                # 返回纯业务数据
+                return CrawlData(
+                    url=request.url,
+                    status_code=getattr(result, 'status_code', None),
+                    markdown=result.markdown,
+                    media=result.media if hasattr(result, 'media') else None,
+                    links=result.links if hasattr(result, 'links') else None
+                )
 
         except asyncio.TimeoutError:
             logger.error(f"爬取超时: {request.url}")
-            return CrawlResult(
-                url=request.url,
-                success=False,
-                error_message="爬取超时"
+            raise CrawlerException(
+                message="爬取超时，请稍后重试",
+                error_type="timeout"
             )
-
+        except CrawlerException:
+            # 重新抛出已知异常
+            raise
         except Exception as e:
             logger.error(f"爬取失败 {request.url}: {str(e)}")
-            return CrawlResult(
-                url=request.url,
-                success=False,
-                error_message=f"爬取失败: {str(e)}"
+            raise CrawlerException(
+                message=f"爬取过程中发生错误: {str(e)}",
+                error_type="unexpected"
             )
 
-    async def crawl_markdown(self, request: MarkdownRequest) -> MarkdownResponse:
+    async def crawl_markdown(self, request: MarkdownRequest) -> MarkdownData:
         """
-        专门获取页面的Markdown内容
+        专门获取页面的Markdown内容 - 返回纯业务数据或抛出异常
 
         Args:
             request: Markdown请求对象
 
         Returns:
-            MarkdownResponse: Markdown响应
+            MarkdownData: Markdown业务数据
+
+        Raises:
+            CrawlerException: 爬取失败时抛出
         """
         try:
             browser_config = self._create_browser_config(request.js_enabled)
@@ -128,91 +153,78 @@ class CrawlerService:
             async with AsyncWebCrawler(config=browser_config) as crawler:
                 result = await crawler.arun(url=request.url, config=crawler_config)
 
-                return self._parse_markdown_result(request, result)
+                if not result.success:
+                    raise CrawlerException(
+                        message=getattr(
+                            result, 'error_message', 'Markdown获取失败'),
+                        error_type="crawl_failed"
+                    )
+
+                # 解析结果
+                title = None
+                if hasattr(result, 'metadata') and result.metadata:
+                    title = result.metadata.get('title')
+
+                raw_markdown = None
+                fit_markdown = None
+
+                if hasattr(result, 'markdown'):
+                    if request.format in [MarkdownFormat.RAW, MarkdownFormat.BOTH]:
+                        raw_markdown = self._extract_raw_markdown(
+                            result.markdown)
+
+                    if request.format in [MarkdownFormat.FIT, MarkdownFormat.BOTH]:
+                        fit_markdown = self._extract_fit_markdown(
+                            result.markdown, raw_markdown)
+
+                # 计算字数
+                word_count = None
+                if raw_markdown:
+                    word_count = len(raw_markdown.split())
+                elif fit_markdown:
+                    word_count = len(fit_markdown.split())
+
+                return MarkdownData(
+                    url=request.url,
+                    status_code=getattr(result, 'status_code', None),
+                    raw_markdown=raw_markdown,
+                    fit_markdown=fit_markdown,
+                    title=title,
+                    word_count=word_count
+                )
 
         except asyncio.TimeoutError:
             logger.error(f"Markdown爬取超时: {request.url}")
-            return MarkdownResponse(
-                url=request.url,
-                success=False,
-                error_message="爬取超时"
+            raise CrawlerException(
+                message="Markdown获取超时，请稍后重试",
+                error_type="timeout"
             )
-
+        except CrawlerException:
+            raise
         except Exception as e:
             logger.error(f"Markdown爬取失败 {request.url}: {str(e)}")
-            return MarkdownResponse(
-                url=request.url,
-                success=False,
-                error_message=f"爬取失败: {str(e)}"
+            raise CrawlerException(
+                message=f"Markdown获取过程中发生错误: {str(e)}",
+                error_type="unexpected"
             )
 
     @staticmethod
-    def _parse_crawl_result(url: str, result: Any) -> CrawlResult:
-        """解析爬取结果为统一格式"""
-        return CrawlResult(
-            url=url,
-            success=result.success,
-            status_code=getattr(result, 'status_code', None),
-            markdown=result.markdown if result.success else None,
-            error_message=getattr(result, 'error_message',
-                                  None) if not result.success else None,
-            media=result.media if result.success and hasattr(
-                result, 'media') else None,
-            links=result.links if result.success and hasattr(
-                result, 'links') else None
-        )
+    def _extract_raw_markdown(markdown_result) -> str:
+        """提取原始markdown内容"""
+        if hasattr(markdown_result, 'raw_markdown'):
+            return markdown_result.raw_markdown
+        else:
+            # 向后兼容，如果没有raw_markdown属性，使用markdown本身
+            return markdown_result if isinstance(markdown_result, str) else str(markdown_result)
 
     @staticmethod
-    def _parse_markdown_result(request: MarkdownRequest, result: Any) -> MarkdownResponse:
-        """解析Markdown结果"""
-        if not result.success:
-            return MarkdownResponse(
-                url=request.url,
-                success=False,
-                error_message=getattr(result, 'error_message', '未知错误')
-            )
-
-        # 获取页面标题
-        title = None
-        if hasattr(result, 'metadata') and result.metadata:
-            title = result.metadata.get('title')
-
-        # 根据请求格式返回相应的markdown内容
-        raw_markdown = None
-        fit_markdown = None
-
-        if hasattr(result, 'markdown'):
-            if request.format in [MarkdownFormat.RAW, MarkdownFormat.BOTH]:
-                if hasattr(result.markdown, 'raw_markdown'):
-                    raw_markdown = result.markdown.raw_markdown
-                else:
-                    # 向后兼容，如果没有raw_markdown属性，使用markdown本身
-                    raw_markdown = result.markdown if isinstance(
-                        result.markdown, str) else str(result.markdown)
-
-            if request.format in [MarkdownFormat.FIT, MarkdownFormat.BOTH]:
-                if hasattr(result.markdown, 'fit_markdown'):
-                    fit_markdown = result.markdown.fit_markdown
-                else:
-                    # 如果没有fit_markdown，使用raw_markdown作为备选
-                    fit_markdown = raw_markdown
-
-        # 计算字数
-        word_count = None
-        if raw_markdown:
-            word_count = len(raw_markdown.split())
-        elif fit_markdown:
-            word_count = len(fit_markdown.split())
-
-        return MarkdownResponse(
-            url=request.url,
-            success=True,
-            status_code=getattr(result, 'status_code', None),
-            raw_markdown=raw_markdown,
-            fit_markdown=fit_markdown,
-            title=title,
-            word_count=word_count
-        )
+    def _extract_fit_markdown(markdown_result, raw_markdown: str = None) -> str:
+        """提取经过过滤的markdown内容"""
+        if hasattr(markdown_result, 'fit_markdown'):
+            return markdown_result.fit_markdown
+        else:
+            # 如果没有fit_markdown，使用raw_markdown作为备选
+            return raw_markdown
 
 
 # 创建服务实例
