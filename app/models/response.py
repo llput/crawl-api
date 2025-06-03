@@ -2,6 +2,7 @@
 from typing import Generic, TypeVar, Optional, Any
 from pydantic import BaseModel
 from .models import CrawlData, MarkdownData, ScreenshotData
+from .auth_models import AuthProfileListData
 
 
 T = TypeVar('T')
@@ -59,4 +60,5 @@ class BusinessCode:
 CrawlResponse = ApiResponse[CrawlData]
 MarkdownResponse = ApiResponse[MarkdownData]
 ScreenshotResponse = ApiResponse[ScreenshotData]
+AuthProfileListResponse = ApiResponse[AuthProfileListData]
 HealthResponse = ApiResponse[dict]

@@ -191,6 +191,17 @@ curl -X POST http://127.0.0.1:8001/api/v1/crawl/screenshot \
   }'
 ```
 
+```bash
+curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_name": "investors_com",
+    "login_url": "https://sso.accounts.dowjones.com/login-page?response_type=code&client_id=GSU1pG2Brgd3Pv2KBnAZ24zvy5uWSCQn&scope=openid%20idp_id%20roles%20email%20given_name%20family_name%20uuid%20djUsername%20djStatus%20trackid%20tags%20prts%20updated_at%20created_at%20offline_access%20djid&redirect_uri=https%3A%2F%2Fmyibd.investors.com%2Foidc%2Fcallback&ui_locales=en-us-x-ibd-23-7&eurl=https%3A%2F%2Fwww.investors.com%2F&nonce=effcc250-52e0-4061-bcd2-ece987195e1c&state=u_NsQ6WtyisRei5-.luZL_O_1ISVaNczsURbS2un1HUu522QC1OFYwwegoaE&resource=https%253A%252F%252Fwww.investors.com%252F&protocol=oauth2&client=GSU1pG2Brgd3Pv2KBnAZ24zvy5uWSCQn#/signin-password",
+    "test_url": "https://www.investors.com/market-trend/the-big-picture/stock-market-dow-jones-sp500-nasdaq-trump-tariff-nvidia-nvda-stock-tesla-tsla/",
+    "setup_timeout": 60000
+  }'
+```
+
 ## 接口说明
 
 ### `/api/v1/crawl/url` - 完整爬取接口
