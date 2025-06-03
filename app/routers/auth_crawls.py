@@ -53,6 +53,7 @@ async def setup_auth_profile(request: AuthSetupRequest) -> ApiResponse[AuthSetup
     except CrawlerException as e:
         error_code_map = {
             "setup_failed": BusinessCode.CRAWL_FAILED,
+            "browser_not_found": BusinessCode.CRAWL_FAILED,
             "unexpected": BusinessCode.INTERNAL_ERROR
         }
 

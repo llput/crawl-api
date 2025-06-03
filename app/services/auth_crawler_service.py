@@ -106,9 +106,10 @@ class AuthCrawlerService:
         """创建带认证的浏览器配置"""
         user_data_dir = self.get_profile_path(site_name)
 
-        # 获取浏览器路径
+        # 强制获取浏览器路径
         browser_path = self._get_browser_executable_path()
 
+        # 创建浏览器配置
         browser_config = BrowserConfig(
             headless=headless,
             java_script_enabled=js_enabled,
@@ -119,11 +120,33 @@ class AuthCrawlerService:
             verbose=True
         )
 
-        # 如果找到了浏览器路径，则设置
+        # 强制设置浏览器路径
         if browser_path:
             browser_config.browser_executable_path = browser_path
+            logger.info(f"✅ 强制设置浏览器路径: {browser_path}")
         else:
-            logger.warning("未设置浏览器路径，将使用默认设置（可能会失败）")
+            # 如果自动检测失败，使用已知路径
+            fallback_path = "/Users/M16/Library/Caches/ms-playwright/chromium-1169/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+            if os.path.exists(fallback_path):
+                browser_config.browser_executable_path = fallback_path
+                logger.info(f"🔄 使用备用路径: {fallback_path}")
+            else:
+                logger.error("❌ 未找到可用的浏览器路径")
+                raise CrawlerException(
+                    message=f"未找到可用的 Chromium 浏览器。请确保已安装 Playwright 浏览器或设置正确的浏览器路径",
+                    error_type="browser_not_found"
+                )
+
+        # 验证路径是否可执行
+        if hasattr(browser_config, 'browser_executable_path') and browser_config.browser_executable_path:
+            if not os.access(browser_config.browser_executable_path, os.X_OK):
+                logger.warning(
+                    f"⚠️ 浏览器文件不可执行，尝试修复权限: {browser_config.browser_executable_path}")
+                try:
+                    os.chmod(browser_config.browser_executable_path, 0o755)
+                    logger.info("✅ 权限修复成功")
+                except Exception as e:
+                    logger.error(f"❌ 权限修复失败: {e}")
 
         return browser_config
 
