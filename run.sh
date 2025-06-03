@@ -20,6 +20,8 @@ show_help() {
     echo -e "  --install-only  只安装依赖，不启动服务"
     echo -e "  --port=NUMBER   指定端口号 (默认: 8001)"
     echo -e "  --no-venv       不使用虚拟环境"
+    echo -e ""
+    echo -e "注意: 此脚本用于首次安装。日常启动请使用 './start.sh'"
     exit 0
 }
 
@@ -52,8 +54,8 @@ done
 # 项目目录
 PROJECT_DIR=$(pwd)
 
-echo -e "${GREEN}🚀 Crawl4AI API 简化版启动脚本${NC}"
-echo -e "${GREEN}================================${NC}"
+echo -e "${GREEN}🚀 Crawl4AI API 安装脚本${NC}"
+echo -e "${GREEN}==========================${NC}"
 
 # 设置虚拟环境
 if [ "$USE_VENV" = true ]; then
@@ -101,7 +103,12 @@ echo -e "${GREEN}✅ 依赖安装完成!${NC}"
 
 # 如果只是安装依赖，则退出
 if [ "$INSTALL_ONLY" = true ]; then
-    echo -e "${GREEN}✨ 依赖安装完成。使用 '$0' 启动服务。${NC}"
+    echo -e "${GREEN}✨ 依赖安装完成。${NC}"
+    echo -e "${YELLOW}💡 使用 './start.sh' 快速启动服务${NC}"
+    echo -e "${YELLOW}💡 或使用 '$0' 重新安装并启动${NC}"
+    if [ "$USE_VENV" = true ]; then
+        deactivate
+    fi
     exit 0
 fi
 
@@ -112,12 +119,13 @@ if [ ! -f ".env" ]; then
     echo -e "${GREEN}📝 已创建.env文件${NC}"
 fi
 
-echo -e "${GREEN}================================${NC}"
+echo -e "${GREEN}==========================${NC}"
 echo -e "${GREEN}🌐 启动Crawl4AI API服务...${NC}"
 echo -e "${YELLOW}📍 服务地址: http://127.0.0.1:$PORT${NC}"
 echo -e "${YELLOW}📖 API文档: http://127.0.0.1:$PORT/docs${NC}"
 echo -e "${YELLOW}🔧 按Ctrl+C停止服务${NC}"
-echo -e "${GREEN}================================${NC}"
+echo -e "${YELLOW}💡 下次启动可直接使用: ./start.sh${NC}"
+echo -e "${GREEN}==========================${NC}"
 
 # 启动应用
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port $PORT --reload
