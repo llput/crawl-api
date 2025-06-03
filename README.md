@@ -221,3 +221,33 @@ make setup
 ## API 文档
 
 启动服务后，访问 http://127.0.0.1:8001/docs 查看完整的 API 文档。
+
+## 响应格式示例
+
+成功响应：
+
+```json
+{
+  "code": 200,
+  "message": "爬取成功",
+  "success": true,
+  "data": {
+    "url": "https://example.com",
+    "status_code": 200,
+    "markdown": "# Example...",
+    "media": {...},
+    "links": {...}
+  }
+}
+```
+
+错误响应：
+
+```json
+{
+  "code": 50001,
+  "message": "爬取超时，请稍后重试",
+  "success": false,
+  "data": null
+}
+```
