@@ -354,7 +354,6 @@ playground/
 large-dataset/
 
 # Machine learning models
-models/
 *.model
 *.pkl
 *.joblib

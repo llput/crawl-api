@@ -5,7 +5,7 @@ from typing import Any
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai.content_filter_strategy import PruningContentFilter
-from app.models.models import CrawlRequest, CrawlData, MarkdownRequest, MarkdownData, MarkdownFormat
+from app.models.models import CrawlRequest, CrawlData, MarkdownRequest, MarkdownData, MarkdownFormat, ScreenshotRequest, ScreenshotData
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +225,90 @@ class CrawlerService:
         else:
             # 如果没有fit_markdown，使用raw_markdown作为备选
             return raw_markdown
+
+    @staticmethod
+    def _create_screenshot_browser_config(request: ScreenshotRequest) -> BrowserConfig:
+        """创建截图专用浏览器配置"""
+        return BrowserConfig(
+            headless=True,
+            java_script_enabled=request.js_enabled,
+            viewport={"width": request.viewport_width or 1280,
+                      "height": request.viewport_height or 720},
+            verbose=False
+        )
+
+    @staticmethod
+    def _create_screenshot_crawler_config(request: ScreenshotRequest) -> CrawlerRunConfig:
+        """创建截图专用爬虫配置"""
+        config = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS if request.bypass_cache else CacheMode.ENABLED,
+            page_timeout=60000,  # 60秒
+            screenshot=True,
+        )
+
+        if request.css_selector:
+            config.css_selector = request.css_selector
+
+        if request.wait_for:
+            config.wait_until = request.wait_for
+
+        return config
+
+    async def take_screenshot(self, request: ScreenshotRequest) -> ScreenshotData:
+        """
+        截取页面截图 - 返回纯业务数据或抛出异常
+
+        Args:
+            request: 截图请求对象
+
+        Returns:
+            ScreenshotData: 截图业务数据
+
+        Raises:
+            CrawlerException: 截图失败时抛出
+        """
+        try:
+            browser_config = self._create_screenshot_browser_config(request)
+            crawler_config = self._create_screenshot_crawler_config(request)
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                result = await crawler.arun(url=request.url, config=crawler_config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=getattr(result, 'error_message', '截图失败'),
+                        error_type="screenshot_failed"
+                    )
+
+                if not result.screenshot:
+                    raise CrawlerException(
+                        message="截图数据为空",
+                        error_type="screenshot_empty"
+                    )
+
+                # 返回纯业务数据
+                return ScreenshotData(
+                    url=request.url,
+                    status_code=getattr(result, 'status_code', None),
+                    screenshot_base64=result.screenshot,
+                    error_message=None
+                )
+
+        except asyncio.TimeoutError:
+            logger.error(f"截图超时: {request.url}")
+            raise CrawlerException(
+                message="截图超时，请稍后重试",
+                error_type="timeout"
+            )
+        except CrawlerException:
+            # 重新抛出已知异常
+            raise
+        except Exception as e:
+            logger.error(f"截图失败 {request.url}: {str(e)}")
+            raise CrawlerException(
+                message=f"截图过程中发生错误: {str(e)}",
+                error_type="unexpected"
+            )
 
 
 # 创建服务实例

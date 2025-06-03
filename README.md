@@ -151,6 +151,46 @@ curl -X POST http://127.0.0.1:8001/api/v1/crawl/markdown \
   }'
 ```
 
+### 基础截图
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/v1/crawl/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.google.com",
+    "js_enabled": true,
+    "bypass_cache": false
+  }'
+```
+
+### 自定义视窗大小截图
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/v1/crawl/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.google.com",
+    "js_enabled": true,
+    "bypass_cache": true,
+    "viewport_width": 1920,
+    "viewport_height": 1080,
+    "wait_for": "networkidle"
+  }'
+```
+
+### 截取页面特定部分
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/v1/crawl/screenshot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.google.com",
+    "css_selector": ".main-content",
+    "js_enabled": true,
+    "bypass_cache": false
+  }'
+```
+
 ## 接口说明
 
 ### `/api/v1/crawl/url` - 完整爬取接口
