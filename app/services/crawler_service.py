@@ -1,6 +1,7 @@
 import asyncio
+import os
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
@@ -23,14 +24,91 @@ class CrawlerService:
     """爬虫服务类"""
 
     @staticmethod
+    def _is_debug_mode() -> bool:
+        """检查是否为调试模式"""
+        return os.environ.get('CRAWLER_DEBUG_MODE', 'false').lower() == 'true'
+
+    @staticmethod
+    def _get_extension_path() -> Optional[str]:
+        """获取扩展路径"""
+        # 支持环境变量配置
+        env_path = os.environ.get('CHROME_EXTENSION_PATH')
+        if env_path and os.path.exists(env_path):
+            return env_path
+
+        # 默认查找项目根目录下的 chrome-extension 文件夹
+        project_extension_path = Path(
+            "./chrome-extension/bypass-paywalls-chrome-clean")
+        if project_extension_path.exists():
+            return str(project_extension_path.resolve())
+
+        # 备选路径 1: download 文件夹
+        download_path = Path("./download/bypass-paywalls-chrome-clean-master")
+        if download_path.exists():
+            return str(download_path.resolve())
+
+        # 备选路径 2: 用户下载目录
+        home_download_path = Path.home() / "Downloads" / \
+            "bypass-paywalls-chrome-clean-master"
+        if home_download_path.exists():
+            return str(home_download_path.resolve())
+
+        return None
+
+    @staticmethod
     def _create_browser_config(js_enabled: bool = True) -> BrowserConfig:
         """创建浏览器配置"""
-        return BrowserConfig(
-            headless=True,
+        # 检查是否有扩展需要加载
+        extension_path = CrawlerService._get_extension_path()
+
+        # 检查调试模式
+        debug_mode = CrawlerService._is_debug_mode()
+
+        # 如果有扩展或调试模式，强制使用非无头模式
+        headless = True
+        if extension_path:
+            headless = False
+            logger.info(f"🔌 检测到扩展，将使用非无头模式: {extension_path}")
+        elif debug_mode:
+            headless = False
+            logger.info(f"🐛 调试模式启用，将使用非无头模式")
+
+        browser_config = BrowserConfig(
+            headless=headless,
             java_script_enabled=js_enabled,
             viewport={"width": 1280, "height": 800},
-            verbose=False
+            verbose=True  # 调试时启用详细日志
         )
+
+        # 添加扩展支持
+        if extension_path:
+            extension_args = [
+                f"--load-extension={extension_path}",
+                f"--disable-extensions-except={extension_path}",
+                "--disable-extensions-except-devtools"
+            ]
+
+            if not hasattr(browser_config, 'extra_args') or browser_config.extra_args is None:
+                browser_config.extra_args = []
+
+            browser_config.extra_args.extend(extension_args)
+            logger.info(f"🔌 已添加扩展参数: {extension_args}")
+
+        # 调试模式下添加额外参数
+        if debug_mode:
+            debug_args = [
+                "--disable-web-security",  # 禁用web安全限制
+                "--disable-features=VizDisplayCompositor",  # 提高兼容性
+                "--allow-running-insecure-content",  # 允许不安全内容
+            ]
+
+            if not hasattr(browser_config, 'extra_args') or browser_config.extra_args is None:
+                browser_config.extra_args = []
+
+            browser_config.extra_args.extend(debug_args)
+            logger.info(f"🐛 已添加调试参数: {debug_args}")
+
+        return browser_config
 
     @staticmethod
     def _create_crawler_config(request: CrawlRequest) -> CrawlerRunConfig:

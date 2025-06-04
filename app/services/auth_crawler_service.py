@@ -25,6 +25,109 @@ class AuthCrawlerService:
         """获取指定站点的认证配置文件路径"""
         return str((self.auth_profiles_dir / site_name).resolve())
 
+    def _get_extension_path(self) -> Optional[str]:
+        """获取扩展路径"""
+        # 支持环境变量配置
+        env_path = os.environ.get('CHROME_EXTENSION_PATH')
+        if env_path and os.path.exists(env_path):
+            return env_path
+
+        # 默认查找项目根目录下的 chrome-extension 文件夹
+        project_extension_path = Path(
+            "./chrome-extension/bypass-paywalls-chrome-clean")
+        if project_extension_path.exists():
+            return str(project_extension_path.resolve())
+
+        # 备选路径 1: download 文件夹
+        download_path = Path("./download/bypass-paywalls-chrome-clean-master")
+        if download_path.exists():
+            return str(download_path.resolve())
+
+        # 备选路径 2: 用户下载目录
+        home_download_path = Path.home() / "Downloads" / \
+            "bypass-paywalls-chrome-clean-master"
+        if home_download_path.exists():
+            return str(home_download_path.resolve())
+
+        return None
+
+    def _create_auth_browser_config(
+        self,
+        site_name: str,
+        js_enabled: bool = True,
+        headless: bool = True
+    ) -> BrowserConfig:
+        """创建带认证的浏览器配置"""
+        user_data_dir = self.get_profile_path(site_name)
+
+        # 强制获取浏览器路径
+        browser_path = self._get_browser_executable_path()
+
+        # 检查是否有扩展需要加载
+        extension_path = self._get_extension_path()
+
+        # 如果有扩展，强制使用非无头模式
+        if extension_path:
+            headless = False
+            logger.info(f"🔌 检测到扩展，将使用非无头模式: {extension_path}")
+
+        # 创建浏览器配置
+        browser_config = BrowserConfig(
+            headless=headless,
+            java_script_enabled=js_enabled,
+            use_persistent_context=True,
+            user_data_dir=user_data_dir,
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            verbose=True
+        )
+
+        # 强制设置浏览器路径
+        if browser_path:
+            browser_config.browser_executable_path = browser_path
+            logger.info(f"✅ 强制设置浏览器路径: {browser_path}")
+        else:
+            # 如果自动检测失败，使用已知路径
+            fallback_path = "/Users/M16/Library/Caches/ms-playwright/chromium-1169/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+            if os.path.exists(fallback_path):
+                browser_config.browser_executable_path = fallback_path
+                logger.info(f"🔄 使用备用路径: {fallback_path}")
+            else:
+                logger.error("❌ 未找到可用的浏览器路径")
+                raise CrawlerException(
+                    message=f"未找到可用的 Chromium 浏览器。请确保已安装 Playwright 浏览器或设置正确的浏览器路径",
+                    error_type="browser_not_found"
+                )
+
+        # 🆕 添加扩展支持
+        if extension_path:
+            # 添加扩展相关参数到 extra_args
+            extension_args = [
+                f"--load-extension={extension_path}",
+                f"--disable-extensions-except={extension_path}",
+                "--disable-extensions-except-devtools"  # 允许开发者工具扩展
+            ]
+
+            # 初始化 extra_args 如果不存在
+            if not hasattr(browser_config, 'extra_args') or browser_config.extra_args is None:
+                browser_config.extra_args = []
+
+            browser_config.extra_args.extend(extension_args)
+            logger.info(f"🔌 已添加扩展参数: {extension_args}")
+
+        # 验证路径是否可执行
+        if hasattr(browser_config, 'browser_executable_path') and browser_config.browser_executable_path:
+            if not os.access(browser_config.browser_executable_path, os.X_OK):
+                logger.warning(
+                    f"⚠️ 浏览器文件不可执行，尝试修复权限: {browser_config.browser_executable_path}")
+                try:
+                    os.chmod(browser_config.browser_executable_path, 0o755)
+                    logger.info("✅ 权限修复成功")
+                except Exception as e:
+                    logger.error(f"❌ 权限修复失败: {e}")
+
+        return browser_config
+
     def _get_browser_executable_path(self) -> Optional[str]:
         """获取浏览器可执行文件路径"""
 

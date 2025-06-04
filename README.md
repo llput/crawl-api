@@ -342,4 +342,13 @@ curl -X POST "http://127.0.0.1:8001/api/v1/auth-crawl/simple-wait-setup?wait_tim
     "login_url": "https://www.xiaohongshu.com/",
     "test_url": "https://www.xiaohongshu.com/explore/683e5ac20000000023015825?xsec_token=ABKHsrzXghvfBkkJk2gdkHE4xen7W4ubtiB0tKSPMI5ek=&xsec_source=pc_feed"
   }'
+
+curl -X POST http://127.0.0.1:8001/api/v1/crawl/markdown \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.ft.com/content/e33583b5-6808-45f8-ac63-2f132d1dead5",
+    "format": "fit",
+    "js_enabled": true,
+    "bypass_cache": true
+  }'
 ```
