@@ -138,8 +138,8 @@ curl -X POST http://127.0.0.1:8001/api/v1/crawl/markdown \
 curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/markdown \
   -H "Content-Type: application/json" \
   -d '{
-    "site_name": "medium_com",
-    "url": "https://www.xiaohongshu.com/explore/683e5ac20000000023015825?xsec_token=ABKHsrzXghvfBkkJk2gdkHE4xen7W4ubtiB0tKSPMI5ek=&xsec_source=pc_feed",
+    "site_name": "xiaohongshu_com",
+    "url": "https://www.xiaohongshu.com/explore/6822eed2000000000303db97?xsec_token=AB_N0uY7_grmKmyvmF8qVGCrsakMHtTZF-CThx-We1qbQ=&xsec_source",
     "js_enabled": true,
     "bypass_cache": true
   }'

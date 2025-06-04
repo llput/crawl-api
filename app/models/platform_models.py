@@ -30,6 +30,11 @@ class PlatformLinksData(BaseModel):
     total_count: int = Field(..., description="链接总数")
     extracted_at: str = Field(..., description="提取时间")
 
+    notes: List[Dict[str, Any]] = Field(
+        default_factory=list, description="提取到的笔记/内容信息列表")
+    raw_links: List[Dict[str, Any]] = Field(
+        default_factory=list, description="原始链接数据（字典数组）")
+
 
 class MediaInfo(BaseModel):
     """媒体信息模型"""

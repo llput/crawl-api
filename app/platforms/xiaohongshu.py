@@ -31,101 +31,6 @@ class XiaohongshuPlatform(BasePlatform):
             version="1.1.0"
         )
 
-    async def extract_content_links(
-        self,
-        source_url: Optional[str] = None,
-        max_links: int = 20,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """提取小红书笔记链接 - 带调试的修复版本"""
-        try:
-            if not source_url:
-                source_url = self.config.default_source_url
-
-            logger.info(f"🔍 正在从小红书提取链接: {source_url}")
-
-            browser_config = await self._get_xiaohongshu_browser_config()
-            config = CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS,
-                page_timeout=60000,
-                wait_for_images=False,
-            )
-
-            async with AsyncWebCrawler(config=browser_config) as crawler:
-                result = await crawler.arun(url=source_url, config=config)
-
-                if not result.success:
-                    raise CrawlerException(
-                        message=f"访问小红书探索页失败: {result.error_message}",
-                        error_type="access_failed"
-                    )
-
-                # 🔍 添加HTML内容调试
-                html_content = getattr(result, 'html', '')
-                logger.info(f"🔍 获取到的HTML长度: {len(html_content)}")
-
-                # 简单检查是否包含小红书笔记链接
-                explore_links_count = html_content.count('/explore/')
-                logger.info(f"🔍 页面中包含 {explore_links_count} 个 /explore/ 链接")
-
-                # 使用修复后的链接提取逻辑
-                notes = self._extract_xiaohongshu_notes_from_html(
-                    html_content, source_url, max_links
-                )
-
-                # 🔍 详细的notes调试信息
-                logger.info(f"🔍 提取到的notes数量: {len(notes)}")
-                if notes:
-                    logger.info(f"🔍 第一个note示例: {notes[0]}")
-                else:
-                    logger.warning("⚠️ 没有提取到任何notes!")
-                    # 尝试简单的链接提取作为备选
-                    notes = self._fallback_extract_links(
-                        html_content, source_url, max_links)
-                    logger.info(f"🔄 备选方法提取到: {len(notes)} 个链接")
-
-                # 构造raw_links
-                raw_links = []
-                for note in notes:
-                    try:
-                        raw_links.append({
-                            "url": note.get("url", ""),
-                            "note_id": note.get("note_id", ""),
-                            "has_token": note.get("has_valid_token", False),
-                            "query_params": note.get("tokens", [])
-                        })
-                    except Exception as e:
-                        logger.warning(f"⚠️ 处理note时出错: {str(e)}")
-                        continue
-
-                logger.info(f"✅ 成功提取 {len(notes)} 个小红书笔记链接")
-                logger.info(f"🔍 raw_links数量: {len(raw_links)}")
-
-                # 确保返回完整的数据结构
-                result_data = {
-                    "platform": self.config.name,
-                    "platform_display_name": self.config.display_name,
-                    "source_url": source_url,
-                    "notes": notes,  # 确保包含notes
-                    "total_count": len(notes),
-                    "extracted_at": datetime.now().isoformat(),
-                    "raw_links": raw_links  # 确保包含raw_links
-                }
-
-                # 🔍 最终数据验证
-                logger.info(f"🔍 返回数据keys: {list(result_data.keys())}")
-                logger.info(
-                    f"🔍 notes字段类型: {type(result_data['notes'])}, 长度: {len(result_data['notes'])}")
-
-                return result_data
-
-        except Exception as e:
-            logger.error(f"❌ 小红书链接提取失败: {str(e)}")
-            raise CrawlerException(
-                message=f"小红书链接提取失败: {str(e)}",
-                error_type="extract_failed"
-            )
-
     async def crawl_content_by_id(
         self,
         content_id: str,
@@ -237,7 +142,7 @@ class XiaohongshuPlatform(BasePlatform):
         base_url: str,
         max_links: int
     ) -> List[Dict[str, Any]]:
-        """从HTML中提取小红书笔记链接 - 改进的调试版本"""
+        """从HTML中提取小红书笔记链接 - 修复版本"""
         notes = []
 
         # 🔍 先检查HTML基本内容
@@ -245,31 +150,51 @@ class XiaohongshuPlatform(BasePlatform):
             logger.warning(f"⚠️ HTML内容异常，长度: {len(html)}")
             return notes
 
-        # 检查是否包含小红书相关内容
-        if "xiaohongshu" not in html.lower() and "explore" not in html.lower():
-            logger.warning("⚠️ HTML中没有发现小红书相关内容")
+        logger.info(f"🔍 开始从HTML提取链接，HTML长度: {len(html)}")
 
-        # 更精确的链接模式
+        # 从markdown请求的成功结果看，链接格式是这样的：
+        # [](https://www.xiaohongshu.com/explore/682d7a17000000000f0338e2?xsec_token=...&xsec_source=)
+
+        # 更精确的链接模式 - 基于实际观察到的格式
         patterns = [
-            r'href="(/explore/[a-f0-9]{24}\?[^"]*)"',  # 精确匹配24位ID
+            # 匹配markdown格式的链接 [](url)
+            r'\]\((https://www\.xiaohongshu\.com/explore/[a-f0-9]{24}\?[^)]*)\)',
+            # 匹配href属性中的链接
+            r'href="(https://www\.xiaohongshu\.com/explore/[a-f0-9]{24}\?[^"]*)"',
+            r'href="(/explore/[a-f0-9]{24}\?[^"]*)"',
+            # 匹配其他可能的格式
+            r'"(https://www\.xiaohongshu\.com/explore/[a-f0-9]{24}\?[^"]*)"',
             r'"(/explore/[a-f0-9]{24}\?[^"]*)"',
-            r'data-href="(/explore/[a-f0-9]{24}\?[^"]*)"',
         ]
 
         all_matches = set()
 
-        for pattern in patterns:
+        for i, pattern in enumerate(patterns):
             matches = re.findall(pattern, html, re.IGNORECASE)
-            logger.info(f"🔍 模式 {pattern} 匹配到 {len(matches)} 个链接")
-            all_matches.update(matches)
+            logger.info(f"🔍 模式 {i+1} 匹配到 {len(matches)} 个链接")
+
+            for match in matches:
+                # 确保是完整的URL
+                if match.startswith('/'):
+                    full_url = urljoin(base_url, match)
+                else:
+                    full_url = match
+                all_matches.add(full_url)
 
         logger.info(f"🔍 总共去重后有 {len(all_matches)} 个唯一链接")
 
-        for i, match in enumerate(list(all_matches)[:max_links]):
-            full_url = urljoin(base_url, match)
+        # 如果主要模式没找到链接，使用备选方案
+        if len(all_matches) == 0:
+            logger.warning("⚠️ 主要模式未找到链接，尝试备选方案...")
+            fallback_notes = self._fallback_extract_links(
+                html, base_url, max_links)
+            return fallback_notes
+
+        # 处理找到的链接
+        for i, full_url in enumerate(list(all_matches)[:max_links]):
             note_id = self.parse_content_id_from_url(full_url)
 
-            if note_id:
+            if note_id and len(note_id) >= 20:  # 小红书ID通常是24位，但至少要20位
                 parsed = urlparse(full_url)
                 query_params = parse_qs(parsed.query)
 
@@ -289,7 +214,8 @@ class XiaohongshuPlatform(BasePlatform):
                 }
 
                 notes.append(note_info)
-                logger.debug(f"🔍 添加note: {note_id}")
+                logger.info(
+                    f"🔍 添加note: {note_id}, 完整参数: {note_info['complete_params']}")
 
         # 优先返回参数完整的链接
         notes.sort(key=lambda x: x["complete_params"], reverse=True)
@@ -348,11 +274,19 @@ class XiaohongshuPlatform(BasePlatform):
 
     async def _get_xiaohongshu_browser_config(self) -> BrowserConfig:
         """获取专门针对小红书优化的浏览器配置"""
-        return self.auth_service._create_auth_browser_config(
+        # 假设 self.auth_service._create_auth_browser_config 返回一个 BrowserConfig 实例
+        # 或者你在这里构造它
+        base_config = self.auth_service._create_auth_browser_config(
             site_name=self.config.site_name,
             js_enabled=True,
-            headless=True
+            headless=True  # 服务器上通常为True，本地调试可设为False
         )
+
+        # 增加页面加载后的额外等待时间（例如：3000毫秒 = 3秒）
+        # 这个值可以根据实际情况调整，如果页面JS较重，可以适当增加
+        base_config.page_load_delay_ms = 3000  # <--- 添加或修改此行
+
+        return base_config
 
     def parse_content_id_from_url(self, url: str) -> Optional[str]:
         """从URL中解析笔记ID"""
@@ -571,43 +505,40 @@ class XiaohongshuPlatform(BasePlatform):
         return has_xsec_token and has_xsec_source
 
     def _fallback_extract_links(self, html: str, base_url: str, max_links: int) -> List[Dict[str, Any]]:
-        """备选的链接提取方法 - 更宽松的匹配"""
+        """备选的链接提取方法 - 基于实际观察的内容"""
         notes = []
 
-        # 更简单的正则表达式，先确保能提取到基本链接
+        # 基于观察到的实际内容，在markdown中寻找链接
+        logger.info("🔄 使用备选提取方法...")
+
+        # 从实际返回的markdown内容中提取
+        # 格式：[](https://www.xiaohongshu.com/explore/682d7a17000000000f0338e2?xsec_token=ABnu0gBGLZLlSE4VqHjDzM0xGRSAMvL7MlHaKrelWGeu8=&xsec_source=)
+
+        # 更宽松的正则表达式
         simple_patterns = [
-            r'/explore/([a-f0-9]+)',  # 最简单的笔记ID匹配
-            r'href="[^"]*(/explore/[a-f0-9]+[^"]*)"',  # 带href的链接
+            r'explore/([a-f0-9]{20,})',  # 直接提取note_id
+            r'/explore/([a-f0-9]+)\?',   # 从URL路径中提取
+            r'xiaohongshu\.com/explore/([a-f0-9]+)',  # 完整域名匹配
         ]
 
         found_ids = set()
 
         for pattern in simple_patterns:
             matches = re.findall(pattern, html, re.IGNORECASE)
-            for match in matches:
-                if isinstance(match, tuple):
-                    note_id = match[0] if match[0] else match[1]
-                    full_path = match[1] if len(
-                        match) > 1 else f"/explore/{match[0]}"
-                else:
-                    if match.startswith('/explore/'):
-                        note_id = match.replace('/explore/', '').split('?')[0]
-                        full_path = match
-                    else:
-                        note_id = match
-                        full_path = f"/explore/{match}"
+            logger.info(f"🔄 备选模式找到 {len(matches)} 个ID")
 
-                if note_id and len(note_id) == 24 and note_id not in found_ids:  # 小红书ID通常是24位
+            for note_id in matches:
+                if note_id and len(note_id) >= 20 and note_id not in found_ids:
                     found_ids.add(note_id)
 
-                    # 构造完整URL
-                    full_url = urljoin(base_url, full_path)
+                    # 构造基本URL
+                    note_url = f"https://www.xiaohongshu.com/explore/{note_id}"
 
                     note_info = {
                         "content_id": note_id,
                         "note_id": note_id,
-                        "url": full_url,
-                        "has_valid_token": "xsec_token" in full_path,
+                        "url": note_url,
+                        "has_valid_token": False,
                         "tokens": [],
                         "preview_title": f"小红书笔记 {note_id}",
                         "xsec_token": None,
@@ -616,9 +547,117 @@ class XiaohongshuPlatform(BasePlatform):
                     }
 
                     notes.append(note_info)
+                    logger.info(f"🔄 备选添加: {note_id}")
 
                     if len(notes) >= max_links:
                         break
 
         logger.info(f"🔄 备选方法提取到 {len(notes)} 个基础链接")
         return notes[:max_links]
+
+    async def extract_content_links(
+        self,
+        source_url: Optional[str] = None,
+        max_links: int = 20,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """提取小红书笔记链接 - 增强调试版本"""
+        try:
+            if not source_url:
+                source_url = self.config.default_source_url
+
+            logger.info(f"🔍 正在从小红书提取链接: {source_url}")
+
+            browser_config = await self._get_xiaohongshu_browser_config()
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=60000,
+                wait_for_images=True,
+            )
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                result = await crawler.arun(url=source_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"访问小红书探索页失败: {result.error_message}",
+                        error_type="access_failed"
+                    )
+
+                # 🔍 增强HTML内容调试
+                html_content = getattr(result, 'html', '')
+                markdown_content = getattr(result, 'markdown', '')
+
+                logger.info(f"🔍 获取到的HTML长度: {len(html_content)}")
+                logger.info(f"🔍 获取到的Markdown长度: {len(markdown_content)}")
+
+                # 检查是否包含小红书笔记链接的特征
+                explore_count = html_content.count('/explore/')
+                markdown_explore_count = markdown_content.count(
+                    '/explore/') if markdown_content else 0
+
+                logger.info(f"🔍 HTML中包含 {explore_count} 个 /explore/ 链接")
+                logger.info(
+                    f"🔍 Markdown中包含 {markdown_explore_count} 个 /explore/ 链接")
+
+                # 🆕 优先使用markdown内容进行提取，因为它更干净
+                content_to_parse = markdown_content if markdown_content and markdown_explore_count > 0 else html_content
+
+                logger.info(
+                    f"🔍 使用{'Markdown' if content_to_parse == markdown_content else 'HTML'}内容进行解析")
+
+                # 使用修复后的链接提取逻辑
+                notes = self._extract_xiaohongshu_notes_from_html(
+                    content_to_parse, source_url, max_links
+                )
+
+                # 🔍 详细的notes调试信息
+                logger.info(f"🔍 提取到的notes数量: {len(notes)}")
+                if notes:
+                    logger.info(f"🔍 第一个note示例: {notes[0]}")
+                else:
+                    logger.warning("⚠️ 没有提取到任何notes!")
+
+                # 构造raw_links
+                raw_links = []
+                for note in notes:
+                    try:
+                        raw_links.append({
+                            "url": note.get("url", ""),
+                            "note_id": note.get("note_id", ""),
+                            "has_token": note.get("has_valid_token", False),
+                            "query_params": note.get("tokens", [])
+                        })
+                    except Exception as e:
+                        logger.warning(f"⚠️ 处理note时出错: {str(e)}")
+                        continue
+
+                logger.info(f"✅ 成功提取 {len(notes)} 个小红书笔记链接")
+                logger.info(f"🔍 raw_links数量: {len(raw_links)}")
+
+                # 🆕 确保返回完整的数据结构，即使notes为空也要包含字段
+                result_data = {
+                    "platform": self.config.name,
+                    "platform_display_name": self.config.display_name,
+                    "source_url": source_url,
+                    "notes": notes,  # 确保包含notes字段
+                    "total_count": len(notes),
+                    "extracted_at": datetime.now().isoformat(),
+                    "raw_links": raw_links  # 确保包含raw_links字段
+                }
+
+                # 🔍 最终数据验证
+                logger.info(f"🔍 返回数据keys: {list(result_data.keys())}")
+                logger.info(
+                    f"🔍 notes字段类型: {type(result_data['notes'])}, 长度: {len(result_data['notes'])}")
+                logger.info(
+                    f"🔍 raw_links字段类型: {type(result_data['raw_links'])}, 长度: {len(result_data['raw_links'])}")
+
+                return result_data
+
+        except Exception as e:
+            logger.error(f"❌ 小红书链接提取失败: {str(e)}")
+            raise CrawlerException(
+                message=f"小红书链接提取失败: {str(e)}",
+                error_type="extract_failed"
+            )
