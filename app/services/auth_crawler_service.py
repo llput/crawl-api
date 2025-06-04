@@ -402,6 +402,109 @@ class AuthCrawlerService:
 
         return profiles
 
+    async def debug_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        setup_timeout: int = 300
+    ) -> Dict[str, str]:
+        """
+        调试版认证设置 - 用于排查浏览器关闭问题
+        """
+        try:
+            # 参数规范化
+            if setup_timeout > 1000:
+                setup_timeout = setup_timeout // 1000
+            setup_timeout = max(60, min(setup_timeout, 600))
+
+            logger.info(f"🔧 调试模式 - 设置超时: {setup_timeout} 秒")
+
+            # 创建浏览器配置
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            logger.info("🌐 正在启动浏览器...")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                logger.info("✅ 浏览器已启动")
+
+                try:
+                    # 第一步：尝试打开登录页面
+                    logger.info(f"📖 正在打开: {login_url}")
+
+                    config = CrawlerRunConfig(
+                        cache_mode=CacheMode.BYPASS,
+                        page_timeout=30000  # 30秒
+                    )
+
+                    result = await crawler.arun(url=login_url, config=config)
+
+                    if result.success:
+                        logger.info("✅ 页面加载成功")
+                        logger.info("🚨 浏览器应该现在是打开状态，请检查！")
+
+                        # 简单等待 - 不做任何复杂操作
+                        wait_time = min(setup_timeout, 300)  # 最多等5分钟
+                        logger.info(f"⏰ 开始等待 {wait_time} 秒...")
+
+                        # 分段等待，每30秒报告一次
+                        for i in range(0, wait_time, 30):
+                            remaining = wait_time - i
+                            logger.info(f"⏰ 剩余等待时间: {remaining} 秒")
+                            logger.info("   请在浏览器中完成登录...")
+                            await asyncio.sleep(min(30, remaining))
+
+                        logger.info("✅ 等待完成，准备验证")
+
+                        # 验证步骤
+                        if test_url != login_url:
+                            logger.info(f"🔍 验证登录状态: {test_url}")
+                            verify_result = await crawler.arun(url=test_url, config=config)
+
+                            if verify_result.success:
+                                logger.info("✅ 验证页面访问成功")
+                                return {
+                                    "status": "success",
+                                    "message": "调试模式完成 - 请检查实际登录状态",
+                                    "profile_path": self.get_profile_path(site_name)
+                                }
+                            else:
+                                logger.error(
+                                    f"❌ 验证页面访问失败: {verify_result.error_message}")
+                        else:
+                            logger.info("🔄 测试URL与登录URL相同，跳过验证")
+                            return {
+                                "status": "warning",
+                                "message": "调试模式完成 - 建议使用不同的测试URL",
+                                "profile_path": self.get_profile_path(site_name)
+                            }
+
+                    else:
+                        logger.error(f"❌ 页面加载失败: {result.error_message}")
+                        raise CrawlerException(
+                            message=f"无法打开登录页面: {result.error_message}",
+                            error_type="setup_failed"
+                        )
+
+                except Exception as e:
+                    logger.error(f"❌ 内部异常: {str(e)}")
+                    # 即使有异常也要等待，让用户看到浏览器
+                    logger.info("🚨 出现异常但继续等待，让您检查浏览器状态...")
+                    await asyncio.sleep(60)  # 等待1分钟
+                    raise
+
+            logger.info("🔚 浏览器即将关闭")
+
+        except Exception as e:
+            logger.error(f"设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"调试设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
     def delete_auth_profile(self, site_name: str) -> bool:
         """删除指定的认证配置"""
         import shutil
@@ -412,6 +515,794 @@ class AuthCrawlerService:
             logger.info(f"已删除认证配置: {site_name}")
             return True
         return False
+
+    async def manual_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        setup_timeout: int = 600
+    ) -> Dict[str, str]:
+        """
+        手动控制版认证设置 - 用户通过API控制流程
+        """
+        try:
+            # 创建浏览器配置
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            logger.info(f"🚀 开始手动控制认证设置: {site_name}")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 第一步：打开登录页面
+                logger.info(f"📖 打开登录页面: {login_url}")
+
+                config = CrawlerRunConfig(
+                    cache_mode=CacheMode.BYPASS,
+                    page_timeout=30000
+                )
+
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 浏览器已打开，登录页面加载完成")
+                logger.info("=" * 60)
+                logger.info("🔑 请在浏览器中完成登录，然后：")
+                logger.info("   1. 调用 /api/v1/auth-crawl/verify-login 验证登录")
+                logger.info("   2. 或调用 /api/v1/auth-crawl/close-browser 关闭浏览器")
+                logger.info("=" * 60)
+
+                # 保持浏览器打开，等待用户调用其他API
+                # 使用一个长时间的等待，但不做任何操作
+                wait_time = min(setup_timeout, 1800)  # 最多30分钟
+                logger.info(f"⏰ 浏览器将保持打开 {wait_time//60} 分钟")
+
+                # 创建一个标记文件表示浏览器正在运行
+                browser_flag_file = Path(
+                    f"./auth_profiles/{site_name}_browser_active")
+                browser_flag_file.parent.mkdir(parents=True, exist_ok=True)
+                browser_flag_file.write_text("active")
+
+                try:
+                    # 定期检查标记文件，如果被删除就退出
+                    for i in range(0, wait_time, 10):
+                        if not browser_flag_file.exists():
+                            logger.info("🛑 检测到停止信号，准备关闭浏览器")
+                            break
+
+                        remaining = wait_time - i
+                        if remaining % 300 == 0:  # 每5分钟提醒一次
+                            logger.info(f"⏰ 浏览器仍然打开，剩余 {remaining//60} 分钟")
+
+                        await asyncio.sleep(10)
+
+                    # 清理标记文件
+                    if browser_flag_file.exists():
+                        browser_flag_file.unlink()
+
+                    # 最后验证一次登录状态
+                    logger.info(f"🔍 最终验证登录状态: {test_url}")
+                    verify_result = await crawler.arun(url=test_url, config=config)
+
+                    if verify_result.success:
+                        analysis = self._analyze_login_status(
+                            verify_result, site_name)
+                        logger.info(f"📊 最终登录状态: {analysis['status']}")
+                        return analysis
+                    else:
+                        return {
+                            "status": "warning",
+                            "message": "浏览器会话已保存，但无法验证最终登录状态",
+                            "profile_path": self.get_profile_path(site_name)
+                        }
+
+                finally:
+                    # 确保清理标记文件
+                    if browser_flag_file.exists():
+                        browser_flag_file.unlink()
+
+            logger.info("🔚 浏览器已关闭")
+            return {
+                "status": "completed",
+                "message": "手动认证设置流程完成",
+                "profile_path": self.get_profile_path(site_name)
+            }
+
+        except Exception as e:
+            logger.error(f"手动认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"手动认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
+    async def verify_login_status(self, site_name: str, test_url: str) -> Dict[str, str]:
+        """验证当前登录状态 - 不关闭浏览器"""
+        try:
+            # 检查浏览器是否还在运行
+            browser_flag_file = Path(
+                f"./auth_profiles/{site_name}_browser_active")
+            if not browser_flag_file.exists():
+                return {
+                    "status": "error",
+                    "message": "浏览器会话不存在或已关闭"
+                }
+
+            # 使用现有会话验证
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=True  # 后台验证
+            )
+
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=30000
+            )
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                result = await crawler.arun(url=test_url, config=config)
+
+                if result.success:
+                    return self._analyze_login_status(result, site_name)
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"验证失败: {result.error_message}"
+                    }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"验证过程中出错: {str(e)}"
+            }
+
+    async def close_browser_session(self, site_name: str) -> Dict[str, str]:
+        """关闭浏览器会话"""
+        try:
+            browser_flag_file = Path(
+                f"./auth_profiles/{site_name}_browser_active")
+            if browser_flag_file.exists():
+                browser_flag_file.unlink()
+                return {
+                    "status": "success",
+                    "message": "浏览器关闭信号已发送"
+                }
+            else:
+                return {
+                    "status": "warning",
+                    "message": "浏览器会话不存在或已关闭"
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"关闭浏览器时出错: {str(e)}"
+            }
+
+    async def simple_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        setup_timeout: int = 300,
+        check_interval: int = 10
+    ) -> Dict[str, str]:
+        """
+        一键认证设置 - 自动检测登录状态并关闭浏览器
+
+        Args:
+            site_name: 站点名称
+            login_url: 登录页面URL
+            test_url: 测试页面URL
+            setup_timeout: 总超时时间（秒）
+            check_interval: 检测间隔（秒）
+
+        Returns:
+            Dict: 设置结果
+        """
+        try:
+            # 创建浏览器配置
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=30000
+            )
+
+            logger.info(f"🚀 开始一键认证设置: {site_name}")
+            logger.info("📖 浏览器将会打开，请在浏览器中完成登录")
+            logger.info("✨ 登录完成后会自动检测并关闭浏览器")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 第一步：打开登录页面
+                logger.info(f"📖 正在打开登录页面: {login_url}")
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 登录页面已打开，请在浏览器中完成登录...")
+
+                # 第二步：定期检测登录状态
+                total_wait = 0
+                login_detected = False
+                last_notification = 0
+
+                while total_wait < setup_timeout and not login_detected:
+                    await asyncio.sleep(check_interval)
+                    total_wait += check_interval
+
+                    # 每60秒提醒一次
+                    if total_wait - last_notification >= 60:
+                        remaining = setup_timeout - total_wait
+                        logger.info(f"⏰ 等待登录中... 剩余时间: {remaining} 秒")
+                        last_notification = total_wait
+
+                    try:
+                        # 检测登录状态
+                        test_result = await crawler.arun(url=test_url, config=config)
+
+                        if test_result.success:
+                            # 分析页面内容判断是否已登录
+                            analysis = self._analyze_login_status(
+                                test_result, site_name)
+
+                            if analysis['status'] in ['success', 'likely_logged_in']:
+                                login_detected = True
+                                logger.info("🎉 检测到登录成功！")
+                                logger.info("🔒 正在保存认证配置...")
+
+                                # 再次访问测试页面确保会话保存
+                                await crawler.arun(url=test_url, config=config)
+
+                                return {
+                                    "status": "success",
+                                    "message": "一键认证设置完成，登录状态已保存",
+                                    "profile_path": self.get_profile_path(site_name),
+                                    "login_detected_at": f"{total_wait}秒"
+                                }
+
+                    except Exception as e:
+                        # 检测过程中的错误不中断流程
+                        logger.debug(f"检测登录状态时出错: {str(e)}")
+                        continue
+
+                # 超时处理
+                if not login_detected:
+                    logger.warning("⚠️ 未检测到登录成功，但会话可能已保存")
+                    return {
+                        "status": "timeout",
+                        "message": "设置超时，但认证配置可能已保存，请尝试使用",
+                        "profile_path": self.get_profile_path(site_name)
+                    }
+
+            logger.info("🔚 浏览器已自动关闭")
+
+        except Exception as e:
+            logger.error(f"一键认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"一键认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
+    def _analyze_login_status(self, result, site_name: str) -> Dict[str, str]:
+        """分析页面内容判断登录状态"""
+        try:
+            content_lower = result.html.lower()
+
+            # 通用登录成功指标
+            success_indicators = [
+                'logout', 'sign out', 'profile', 'account', 'dashboard',
+                'settings', 'my account', 'user menu', 'welcome'
+            ]
+
+            # 通用未登录指标
+            login_indicators = [
+                'login', 'sign in', 'signin', 'log in', 'authenticate'
+            ]
+
+            # 站点特定指标
+            if site_name == "medium_com":
+                success_indicators.extend(
+                    ['write', 'stories', 'following', 'notifications'])
+                login_indicators.extend(['get started', 'sign up'])
+            elif site_name == "investors_com":
+                success_indicators.extend(
+                    ['premium', 'watchlist', 'portfolio'])
+                login_indicators.extend(['subscribe', 'free trial'])
+
+            # 计算指标
+            success_count = sum(
+                1 for indicator in success_indicators if indicator in content_lower)
+            login_count = sum(
+                1 for indicator in login_indicators if indicator in content_lower)
+
+            # 判断逻辑
+            if success_count > login_count and success_count >= 2:
+                return {
+                    "status": "success",
+                    "message": f"登录成功 (成功指标: {success_count}, 登录指标: {login_count})",
+                    "confidence": "high"
+                }
+            elif success_count > 0 and login_count == 0:
+                return {
+                    "status": "likely_logged_in",
+                    "message": f"可能已登录 (成功指标: {success_count})",
+                    "confidence": "medium"
+                }
+            elif login_count > success_count:
+                return {
+                    "status": "not_logged_in",
+                    "message": f"尚未登录 (登录指标: {login_count})",
+                    "confidence": "high"
+                }
+            else:
+                return {
+                    "status": "uncertain",
+                    "message": "无法确定登录状态",
+                    "confidence": "low"
+                }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"分析登录状态时出错: {str(e)}",
+                "confidence": "none"
+            }
+
+    async def interactive_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        setup_timeout: int = 600
+    ) -> Dict[str, str]:
+        """
+        交互式认证设置 - 用户手动确认登录完成
+
+        流程：
+        1. 打开浏览器到登录页面
+        2. 用户在浏览器中完成登录
+        3. 用户在浏览器地址栏访问特殊确认URL来确认登录完成
+        4. 系统检测到确认信号后保存配置并关闭浏览器
+
+        Args:
+            site_name: 站点名称
+            login_url: 登录页面URL
+            test_url: 测试页面URL
+            setup_timeout: 总超时时间（秒）
+
+        Returns:
+            Dict: 设置结果
+        """
+        try:
+            # 创建浏览器配置
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=30000
+            )
+
+            # 生成确认URL
+            confirm_url = f"data:text/html,<html><body><h1>认证设置完成!</h1><p>站点: {site_name}</p><p>请关闭此浏览器窗口</p><script>setTimeout(()=>{{window.close();}}, 3000);</script></body></html>"
+
+            logger.info(f"🚀 开始交互式认证设置: {site_name}")
+            logger.info("=" * 60)
+            logger.info("📖 浏览器即将打开，请按以下步骤操作：")
+            logger.info("   1. 在浏览器中完成登录")
+            logger.info(f"   2. 登录成功后，在地址栏输入: about:blank")
+            logger.info("   3. 然后输入以下确认地址:")
+            logger.info(f"      {confirm_url[:100]}...")
+            logger.info("   4. 或者直接关闭浏览器窗口")
+            logger.info("=" * 60)
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 第一步：打开登录页面
+                logger.info(f"📖 正在打开登录页面: {login_url}")
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 登录页面已打开")
+                logger.info("🔑 请在浏览器中完成登录...")
+
+                # 等待用户操作 - 定期检测浏览器是否还活着
+                total_wait = 0
+                check_interval = 5
+                last_notification = 0
+
+                while total_wait < setup_timeout:
+                    await asyncio.sleep(check_interval)
+                    total_wait += check_interval
+
+                    # 每120秒提醒一次
+                    if total_wait - last_notification >= 120:
+                        remaining = setup_timeout - total_wait
+                        logger.info(f"⏰ 等待用户操作... 剩余时间: {remaining//60} 分钟")
+                        logger.info("   登录完成后请关闭浏览器窗口")
+                        last_notification = total_wait
+
+                    try:
+                        # 尝试访问测试页面验证浏览器状态
+                        # 这里不做登录状态判断，只是保持会话活跃
+                        test_result = await crawler.arun(url=test_url, config=config)
+
+                        # 检查是否用户尝试访问确认页面
+                        if test_result.success and "认证设置完成" in test_result.html:
+                            logger.info("🎉 检测到用户确认信号！")
+                            break
+
+                    except Exception as e:
+                        # 如果出现连接错误，可能是浏览器被关闭了
+                        if "disconnected" in str(e).lower() or "closed" in str(e).lower():
+                            logger.info("🔚 检测到浏览器已关闭")
+                            break
+                        # 其他错误继续等待
+                        continue
+
+                # 最终验证和保存
+                logger.info("💾 正在保存认证配置...")
+
+                try:
+                    # 最后验证一次登录状态
+                    final_result = await crawler.arun(url=test_url, config=config)
+                    if final_result.success:
+                        # 简单检查是否还有明显的登录提示
+                        content_lower = final_result.html.lower()
+                        obvious_login_signs = ['sign in',
+                                               'log in', 'login', 'sign up']
+
+                        login_signs_count = sum(
+                            1 for sign in obvious_login_signs if sign in content_lower)
+
+                        if login_signs_count <= 2:  # 容忍少量登录提示（可能是页脚等）
+                            status = "success"
+                            message = "认证配置设置成功，登录状态已保存"
+                        else:
+                            status = "warning"
+                            message = f"认证配置已保存，但检测到{login_signs_count}个登录提示，请验证登录状态"
+                    else:
+                        status = "warning"
+                        message = "认证配置已保存，但无法验证最终状态"
+
+                except Exception:
+                    status = "completed"
+                    message = "认证配置已保存，用户已关闭浏览器"
+
+                return {
+                    "status": status,
+                    "message": message,
+                    "profile_path": self.get_profile_path(site_name),
+                    "duration": f"{total_wait}秒"
+                }
+
+            logger.info("🔚 浏览器会话已结束")
+
+        except Exception as e:
+            logger.error(f"交互式认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"交互式认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
+    async def quick_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        wait_time: int = 120
+    ) -> Dict[str, str]:
+        """
+        快速认证设置 - 固定等待时间版本
+
+        Args:
+            site_name: 站点名称
+            login_url: 登录页面URL
+            test_url: 测试页面URL
+            wait_time: 等待时间（秒），默认2分钟
+
+        Returns:
+            Dict: 设置结果
+        """
+        try:
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=30000
+            )
+
+            logger.info(f"🚀 快速认证设置: {site_name}")
+            logger.info(f"⏰ 将等待 {wait_time} 秒供您完成登录")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 打开登录页面
+                logger.info(f"📖 正在打开登录页面: {login_url}")
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 登录页面已打开，请开始登录...")
+
+                # 分段等待，每30秒提醒一次
+                for i in range(0, wait_time, 30):
+                    remaining = wait_time - i
+                    logger.info(f"⏰ 等待登录中... 剩余时间: {remaining} 秒")
+                    await asyncio.sleep(min(30, remaining))
+
+                logger.info("⏰ 等待时间结束，正在保存配置...")
+
+                # 访问测试页面保存会话
+                try:
+                    await crawler.arun(url=test_url, config=config)
+                    logger.info("💾 会话已保存")
+                except Exception:
+                    logger.warning("⚠️ 保存会话时出现警告，但配置可能仍有效")
+
+                return {
+                    "status": "completed",
+                    "message": f"快速认证设置完成，已等待{wait_time}秒",
+                    "profile_path": self.get_profile_path(site_name)
+                }
+
+            logger.info("🔚 浏览器已关闭")
+
+        except Exception as e:
+            logger.error(f"快速认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"快速认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
+    async def quick_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        wait_time: int = 120
+    ) -> Dict[str, str]:
+        """
+        快速认证设置 - 修复浏览器自动关闭问题
+
+        Args:
+            site_name: 站点名称
+            login_url: 登录页面URL
+            test_url: 测试页面URL
+            wait_time: 等待时间（秒），默认2分钟
+
+        Returns:
+            Dict: 设置结果
+        """
+        try:
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=60000  # 增加页面超时时间
+            )
+
+            logger.info(f"🚀 快速认证设置: {site_name}")
+            logger.info(f"⏰ 将等待 {wait_time} 秒供您完成登录")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 打开登录页面
+                logger.info(f"📖 正在打开登录页面: {login_url}")
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 登录页面已打开，请开始登录...")
+
+                # 修复：在等待期间保持页面活跃，防止被自动关闭
+                elapsed_time = 0
+                check_interval = 30  # 每30秒检查一次
+
+                while elapsed_time < wait_time:
+                    remaining = wait_time - elapsed_time
+                    logger.info(f"⏰ 等待登录中... 剩余时间: {remaining} 秒")
+
+                    # 等待时间（但不超过剩余时间）
+                    sleep_time = min(check_interval, remaining)
+                    await asyncio.sleep(sleep_time)
+                    elapsed_time += sleep_time
+
+                    # 关键修复：定期访问页面保持活跃，防止被关闭
+                    try:
+                        # 使用更短的超时时间进行轻量级检查
+                        keep_alive_config = CrawlerRunConfig(
+                            cache_mode=CacheMode.BYPASS,
+                            page_timeout=10000  # 10秒超时
+                        )
+
+                        # 访问当前页面保持活跃（不输出结果）
+                        await crawler.arun(url=login_url, config=keep_alive_config)
+                        logger.debug("🔄 页面保活检查完成")
+
+                    except Exception as e:
+                        # 如果保活失败，记录但继续等待
+                        logger.debug(f"保活检查出现异常: {str(e)}")
+                        continue
+
+                logger.info("⏰ 等待时间结束，正在保存认证配置...")
+
+                # 访问测试页面保存会话
+                try:
+                    final_config = CrawlerRunConfig(
+                        cache_mode=CacheMode.BYPASS,
+                        page_timeout=30000
+                    )
+                    test_result = await crawler.arun(url=test_url, config=final_config)
+
+                    if test_result.success:
+                        logger.info("💾 认证会话已保存")
+
+                        # 简单验证登录状态
+                        content_lower = test_result.html.lower()
+                        login_indicators = ['sign in',
+                                            'log in', 'login', 'sign up']
+                        login_count = sum(
+                            1 for indicator in login_indicators if indicator in content_lower)
+
+                        if login_count <= 2:
+                            status = "success"
+                            message = f"认证设置成功，等待时间{wait_time}秒"
+                        else:
+                            status = "warning"
+                            message = f"认证配置已保存，但检测到{login_count}个登录提示，建议验证"
+                    else:
+                        status = "completed"
+                        message = f"认证设置完成，等待时间{wait_time}秒，请测试使用"
+
+                except Exception as e:
+                    logger.warning(f"保存会话时出现警告: {str(e)}")
+                    status = "completed"
+                    message = f"认证设置完成，等待时间{wait_time}秒，配置可能已保存"
+
+                return {
+                    "status": status,
+                    "message": message,
+                    "profile_path": self.get_profile_path(site_name)
+                }
+
+            logger.info("🔚 浏览器已关闭")
+
+        except Exception as e:
+            logger.error(f"快速认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"快速认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
+
+    async def simple_wait_setup_auth_profile(
+        self,
+        site_name: str,
+        login_url: str,
+        test_url: str,
+        wait_time: int = 120
+    ) -> Dict[str, str]:
+        """
+        简单等待版认证设置 - 最小化干预
+
+        策略：打开页面后纯等待，最后保存，避免中间操作导致页面关闭
+        """
+        try:
+            browser_config = self._create_auth_browser_config(
+                site_name=site_name,
+                headless=False
+            )
+
+            # 设置较长的页面超时时间
+            config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                page_timeout=max(wait_time * 1000 + 30000,
+                                 60000)  # 等待时间+30秒的缓冲
+            )
+
+            logger.info(f"🚀 简单等待版认证设置: {site_name}")
+            logger.info(f"⏰ 浏览器将保持打开 {wait_time} 秒")
+            logger.info("🔑 请在浏览器中完成登录，期间请勿关闭浏览器")
+
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # 第一步：打开登录页面
+                logger.info(f"📖 正在打开登录页面: {login_url}")
+                result = await crawler.arun(url=login_url, config=config)
+
+                if not result.success:
+                    raise CrawlerException(
+                        message=f"无法打开登录页面: {result.error_message}",
+                        error_type="setup_failed"
+                    )
+
+                logger.info("✅ 登录页面已打开")
+                logger.info("💡 请在浏览器中完成登录...")
+
+                # 第二步：纯等待，避免任何可能触发页面关闭的操作
+                for i in range(wait_time // 30):
+                    remaining = wait_time - (i * 30)
+                    logger.info(f"⏰ 等待中... 剩余约 {remaining} 秒")
+                    await asyncio.sleep(30)
+
+                # 处理剩余的不足30秒的时间
+                final_wait = wait_time % 30
+                if final_wait > 0:
+                    logger.info(f"⏰ 最后等待 {final_wait} 秒...")
+                    await asyncio.sleep(final_wait)
+
+                logger.info("⏰ 等待完成，正在保存认证状态...")
+
+                # 第三步：访问测试页面以保存认证状态
+                try:
+                    save_config = CrawlerRunConfig(
+                        cache_mode=CacheMode.BYPASS,
+                        page_timeout=30000
+                    )
+
+                    save_result = await crawler.arun(url=test_url, config=save_config)
+
+                    if save_result.success:
+                        logger.info("💾 认证状态已保存")
+                        return {
+                            "status": "completed",
+                            "message": f"简单等待版设置完成，已等待{wait_time}秒",
+                            "profile_path": self.get_profile_path(site_name)
+                        }
+                    else:
+                        logger.warning("保存认证状态时出现问题，但配置文件可能已生成")
+                        return {
+                            "status": "warning",
+                            "message": f"设置完成但保存状态异常，已等待{wait_time}秒，请测试使用",
+                            "profile_path": self.get_profile_path(site_name)
+                        }
+
+                except Exception as e:
+                    logger.warning(f"保存阶段出现异常: {str(e)}")
+                    return {
+                        "status": "completed",
+                        "message": f"设置完成，已等待{wait_time}秒，配置可能已保存",
+                        "profile_path": self.get_profile_path(site_name)
+                    }
+
+            logger.info("🔚 浏览器已关闭")
+
+        except Exception as e:
+            logger.error(f"简单等待版认证设置失败: {str(e)}")
+            raise CrawlerException(
+                message=f"简单等待版认证设置失败: {str(e)}",
+                error_type="setup_failed"
+            )
 
 
 # 创建服务实例

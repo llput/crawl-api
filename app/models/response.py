@@ -3,7 +3,10 @@ from typing import Generic, TypeVar, Optional, Any
 from pydantic import BaseModel
 from .models import CrawlData, MarkdownData, ScreenshotData
 from .auth_models import AuthProfileListData
-
+from .platform_models import (
+    PlatformInfo, PlatformLinksData, PlatformContentData,
+    XiaohongshuLinksData, XiaohongshuNoteData
+)
 
 T = TypeVar('T')
 
@@ -62,3 +65,10 @@ MarkdownResponse = ApiResponse[MarkdownData]
 ScreenshotResponse = ApiResponse[ScreenshotData]
 AuthProfileListResponse = ApiResponse[AuthProfileListData]
 HealthResponse = ApiResponse[dict]
+
+# 平台响应类型
+PlatformInfoListResponse = ApiResponse[list[PlatformInfo]]
+PlatformLinksResponse = ApiResponse[PlatformLinksData]
+PlatformContentResponse = ApiResponse[PlatformContentData]
+XiaohongshuLinksResponse = ApiResponse[XiaohongshuLinksData]
+XiaohongshuNoteResponse = ApiResponse[XiaohongshuNoteData]

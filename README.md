@@ -134,6 +134,15 @@ curl -X POST http://127.0.0.1:8001/api/v1/crawl/markdown \
     "js_enabled": true,
     "bypass_cache": true
   }'
+
+curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/markdown \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_name": "medium_com",
+    "url": "https://www.xiaohongshu.com/explore/683e5ac20000000023015825?xsec_token=ABKHsrzXghvfBkkJk2gdkHE4xen7W4ubtiB0tKSPMI5ek=&xsec_source=pc_feed",
+    "js_enabled": true,
+    "bypass_cache": true
+  }'
 ```
 
 ### 自定义 Markdown 生成选项
@@ -203,6 +212,16 @@ curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/setup \
     "test_url": "https://www.investors.com/market-trend/the-big-picture/stock-market-dow-jones-sp500-nasdaq-trump-tariff-nvidia-nvda-stock-tesla-tsla/",
     "setup_timeout": 60000
   }'
+
+curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_name": "medium_com",
+    "login_url": "https://medium.com/",
+    "test_url": "https://medium.com/",
+    "setup_timeout": 600000
+  }'
+
 
 curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/setup \
   -H "Content-Type: application/json" \
@@ -313,4 +332,14 @@ make setup
   "success": false,
   "data": null
 }
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8001/api/v1/auth-crawl/simple-wait-setup?wait_time=90" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_name": "xiaohongshu_com",
+    "login_url": "https://www.xiaohongshu.com/",
+    "test_url": "https://www.xiaohongshu.com/explore/683e5ac20000000023015825?xsec_token=ABKHsrzXghvfBkkJk2gdkHE4xen7W4ubtiB0tKSPMI5ek=&xsec_source=pc_feed"
+  }'
 ```
