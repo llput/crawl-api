@@ -346,9 +346,22 @@ curl -X POST "http://127.0.0.1:8001/api/v1/auth-crawl/simple-wait-setup?wait_tim
 curl -X POST http://127.0.0.1:8001/api/v1/crawl/markdown \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://www.ft.com/content/e33583b5-6808-45f8-ac63-2f132d1dead5",
+    "url": "https://www.ft.com/content/4c90feeb-75cf-40fc-af13-addca27746f7",
     "format": "fit",
     "js_enabled": true,
     "bypass_cache": true
   }'
+
+
+
+
+curl -X POST http://127.0.0.1:8001/api/v1/auth-crawl/crawl \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_name": "investors_com",
+    "url": "https://www.investors.com/market-trend/the-big-picture/stock-market-sp-500-breakout-nasdaq-20000-dow-jones-coreweave/",
+    "js_enabled": true,
+    "bypass_cache": true
+  }'
+
 ```
